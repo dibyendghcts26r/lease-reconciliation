@@ -1,0 +1,145 @@
+/*
+ * =====================================================================
+ * REAL AI IMPLEMENTATION - READY TO PLUG IN
+ * =====================================================================
+ *
+ * This file is intentionally named ".java.txt" so it does NOT compile with
+ * the base project (which has no Spring AI dependency and runs offline).
+ *
+ * TO ACTIVATE (see README "Switching on the real AI"):
+ *   1. Uncomment the Spring AI starter dependency in pom.xml
+ *      (get the exact artifact from https://start.spring.io).
+ *   2. Rename this file:  SpringAiRealMatcher.java.txt -> SpringAiRealMatcher.java
+ *   3. Set  recon.ai.mode=real  in application.properties and provide the API key.
+ *
+ * Nothing else in the codebase changes - it implements the same AiMatcher
+ * interface the rest of the app already depends on.
+ * =====================================================================
+ */
+package com.cognizant.reconciliation.ai;
+
+import com.cognizant.reconciliation.dto.MatchResult;
+import com.cognizant.reconciliation.model.BankTransaction;
+import com.cognizant.reconciliation.model.LeaseSchedule;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+
+@Component
+@ConditionalOnProperty(name = "recon.ai.mode", havingValue = "real")
+public class SpringAiRealMatcher implements AiMatcher {
+
+    private final ChatClient chatClient;
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    // Spring AI auto-configures ChatClient.Builder once a model + key are set.
+    public SpringAiRealMatcher(ChatClient.Builder builder) {
+        this.chatClient = builder.build();
+    }
+
+    @Override
+    public String mode() {
+        return "real";
+    }
+
+    @Override
+    public List<MatchResult> resolve(List<BankTransaction> unresolved, List<LeaseSchedule> candidates) {
+        List<MatchResult> out = new ArrayList<>();
+        if (unresolved.isEmpty()) {
+            return out;
+        }
+
+        String prompt = buildPrompt(unresolved, candidates);
+
+        // One clean call. We ask the model to return strict JSON so we can parse it.
+        String json = chatClient.prompt()
+                .user(prompt)
+                .call()
+                .content();
+
+        try {
+            // Expecting: [ { "txnId": "...", "matchedLeaseId": "..." | null,
+            //                "status": "MATCHED_AI|FLAGGED|UNMATCHED",
+            //                "confidence": 0.0-1.0, "reason": "..." }, ... ]
+            AiLine[] lines = mapper.readValue(stripFences(json), AiLine[].class);
+            for (AiLine line : lines) {
+                BigDecimalHolder amount = findAmount(unresolved, line.txnId);
+                out.add(new MatchResult(
+                        line.txnId,
+                        line.matchedLeaseId,
+                        amount == null ? null : amount.value,
+                        line.status,
+                        "AI",
+                        line.confidence,
+                        line.reason
+                ));
+            }
+        } catch (Exception e) {
+            // If the model returns something unparseable, fail safe: mark all for review.
+            for (BankTransaction txn : unresolved) {
+                out.add(new MatchResult(
+                        txn.getTxnId(), null, txn.getAmount(),
+                        "UNMATCHED", "AI", 0.0,
+                        "AI response could not be parsed; routed to manual review. (" + e.getMessage() + ")"
+                ));
+            }
+        }
+        return out;
+    }
+
+    private String buildPrompt(List<BankTransaction> txns, List<LeaseSchedule> leases) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("You are a finance reconciliation assistant. Match each bank transaction ")
+          .append("to the most likely lease using the reference text and amount.\n\n");
+
+        sb.append("EXPECTED LEASES:\n");
+        for (LeaseSchedule l : leases) {
+            sb.append("- ").append(l.getLeaseId())
+              .append(" | expected ").append(l.getExpectedAmount()).append("\n");
+        }
+
+        sb.append("\nUNMATCHED TRANSACTIONS:\n");
+        for (BankTransaction t : txns) {
+            sb.append("- txnId=").append(t.getTxnId())
+              .append(" | amount=").append(t.getAmount())
+              .append(" | reference=\"").append(t.getReference()).append("\"\n");
+        }
+
+        sb.append("\nFor each transaction decide: matchedLeaseId (or null if none), ")
+          .append("status (MATCHED_AI if amount equals expected, FLAGGED if partial/overpayment, ")
+          .append("UNMATCHED if no lease can be identified), a confidence 0.0-1.0, and a one-line reason.\n")
+          .append("Respond with ONLY a JSON array, no markdown, no commentary.");
+        return sb.toString();
+    }
+
+    private String stripFences(String s) {
+        return s == null ? "[]" : s.replace("```json", "").replace("```", "").trim();
+    }
+
+    // --- small helpers ---
+    private static class AiLine {
+        public String txnId;
+        public String matchedLeaseId;
+        public String status;
+        public double confidence;
+        public String reason;
+    }
+
+    private static class BigDecimalHolder {
+        java.math.BigDecimal value;
+        BigDecimalHolder(java.math.BigDecimal v) { this.value = v; }
+    }
+
+    private BigDecimalHolder findAmount(List<BankTransaction> txns, String txnId) {
+        for (BankTransaction t : txns) {
+            if (t.getTxnId().equals(txnId)) {
+                return new BigDecimalHolder(t.getAmount());
+            }
+        }
+        return null;
+    }
+}

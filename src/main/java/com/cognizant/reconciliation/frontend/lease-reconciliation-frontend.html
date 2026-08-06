@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Case File — Lease Payment Reconciliation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#12161c;
+    --ink-2:#1a2029;
+    --paper:#f1ead9;
+    --paper-dim:#e6ddc8;
+    --rule:#2f5d50;
+    --rule-dim:#274d43;
+    --amber:#c1732e;
+    --rust:#9b3b3b;
+    --ai:#4b4a82;
+    --ink-soft:rgba(241,234,217,0.7);
+    --ink-faint:rgba(241,234,217,0.42);
+    --line:rgba(241,234,217,0.14);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--ink);
+    color:var(--paper);
+    font-family:'Inter',sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  ::selection{background:var(--amber); color:var(--ink);}
+
+  .wrap{max-width:1180px; margin:0 auto; padding:0 28px 120px;}
+
+  /* ---------- Header / case file masthead ---------- */
+  header.masthead{
+    padding:56px 0 28px;
+    border-bottom:1px solid var(--line);
+    margin-bottom:36px;
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+    gap:24px;
+    flex-wrap:wrap;
+  }
+  .case-id{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12.5px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    margin-bottom:14px;
+  }
+  h1{
+    font-family:'Fraunces',serif;
+    font-weight:600;
+    font-size:clamp(34px,5vw,54px);
+    line-height:1.02;
+    margin:0 0 10px;
+    letter-spacing:-0.01em;
+  }
+  h1 em{
+    font-style:italic;
+    color:var(--paper-dim);
+    font-weight:400;
+  }
+  .subline{
+    font-size:15px;
+    color:var(--ink-soft);
+    max-width:480px;
+    line-height:1.5;
+  }
+  .conn-box{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    text-align:right;
+  }
+  .conn-row{display:flex; gap:8px; align-items:center; justify-content:flex-end; margin-bottom:8px;}
+  .conn-row input{
+    background:var(--ink-2);
+    border:1px solid var(--line);
+    color:var(--paper);
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    padding:7px 10px;
+    border-radius:4px;
+    width:220px;
+  }
+  .conn-row input:focus{outline:1px solid var(--amber);}
+  .dot{width:7px; height:7px; border-radius:50%; display:inline-block; flex-shrink:0;}
+  .dot.ok{background:#5fa389; box-shadow:0 0 8px #5fa38999;}
+  .dot.bad{background:var(--rust); box-shadow:0 0 8px #9b3b3b99;}
+  .dot.wait{background:var(--ink-faint);}
+  .conn-label{color:var(--ink-faint);}
+
+  /* ---------- Ledger summary tally ---------- */
+  .tally{
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    border:1px solid var(--line);
+    border-radius:8px;
+    overflow:hidden;
+    margin-bottom:44px;
+  }
+  .tally .cell{
+    padding:20px 18px;
+    border-right:1px solid var(--line);
+  }
+  .tally .cell:last-child{border-right:none;}
+  .tally .num{
+    font-family:'Fraunces',serif;
+    font-size:32px;
+    font-weight:600;
+    display:block;
+    font-variant-numeric:tabular-nums;
+  }
+  .tally .lbl{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    margin-top:4px;
+    display:block;
+  }
+  .tally .cell.rule .num{color:#5fa389;}
+  .tally .cell.ai .num{color:#9291d6;}
+  .tally .cell.flag .num{color:var(--amber);}
+  .tally .cell.unm .num{color:#c97a7a;}
+
+  /* ---------- Section headers ---------- */
+  .section-head{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    margin-bottom:16px;
+    gap:12px;
+  }
+  .section-head h2{
+    font-family:'Fraunces',serif;
+    font-size:20px;
+    font-weight:600;
+    margin:0;
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+  }
+  .section-head .idx{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    color:var(--ink-faint);
+    font-weight:400;
+  }
+  .section-head .hint{
+    font-size:12.5px;
+    color:var(--ink-faint);
+  }
+
+  section{margin-bottom:56px;}
+
+  /* ---------- Ledger tables ---------- */
+  .ledgers{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:28px;
+  }
+  @media (max-width:820px){ .ledgers{grid-template-columns:1fr;} }
+
+  .ledger-card{
+    background:var(--paper);
+    color:var(--ink);
+    border-radius:6px;
+    overflow:hidden;
+  }
+  .ledger-card .lc-head{
+    padding:16px 18px 12px;
+    border-bottom:2px solid var(--ink);
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+  }
+  .ledger-card .lc-head h3{
+    font-family:'Fraunces',serif;
+    font-size:16px;
+    margin:0;
+    font-weight:600;
+  }
+  .ledger-card .lc-head .count{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    color:#5a5142;
+  }
+  table{width:100%; border-collapse:collapse;}
+  thead th{
+    text-align:left;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:#6b6252;
+    padding:10px 18px 8px;
+    border-bottom:1px solid var(--paper-dim);
+  }
+  tbody td{
+    padding:10px 18px;
+    font-size:13px;
+    border-bottom:1px solid rgba(0,0,0,0.06);
+  }
+  tbody tr:last-child td{border-bottom:none;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  .amt{font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; text-align:right;}
+  thead th.amt-h{text-align:right;}
+  .ref-cell{color:#4a4436; max-width:220px;}
+  .empty-row td{
+    text-align:center;
+    padding:26px 18px;
+    color:#8b8270;
+    font-size:12.5px;
+    font-style:italic;
+  }
+
+  /* ---------- Add transaction (file new entry) ---------- */
+  .file-entry{
+    background:var(--ink-2);
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:20px 22px;
+  }
+  .file-entry .toggle-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    cursor:pointer;
+    user-select:none;
+  }
+  .file-entry .toggle-row h2{
+    font-family:'Fraunces',serif;
+    font-size:17px;
+    margin:0;
+    font-weight:600;
+  }
+  .chev{
+    font-family:'IBM Plex Mono',monospace;
+    color:var(--ink-faint);
+    transition:transform 0.2s ease;
+    font-size:13px;
+  }
+  .chev.open{transform:rotate(180deg);}
+  .entry-body{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr 2fr auto;
+    gap:12px;
+    margin-top:18px;
+    align-items:end;
+    max-height:0;
+    overflow:hidden;
+    opacity:0;
+    transition:max-height 0.25s ease, opacity 0.2s ease, margin-top 0.25s ease;
+  }
+  .entry-body.open{max-height:160px; opacity:1;}
+  @media (max-width:820px){ .entry-body{grid-template-columns:1fr 1fr; } .entry-body .full{grid-column:1/-1;} }
+  .field label{
+    display:block;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    margin-bottom:6px;
+  }
+  .field input{
+    width:100%;
+    background:var(--ink);
+    border:1px solid var(--line);
+    color:var(--paper);
+    padding:9px 10px;
+    border-radius:4px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+  }
+  .field input:focus{outline:1px solid var(--amber); border-color:var(--amber);}
+  .btn{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12.5px;
+    letter-spacing:0.04em;
+    border:none;
+    border-radius:4px;
+    padding:10px 16px;
+    cursor:pointer;
+    transition:transform 0.12s ease, opacity 0.12s ease;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn:disabled{opacity:0.5; cursor:not-allowed;}
+  .btn-add{background:var(--paper); color:var(--ink); font-weight:600; white-space:nowrap;}
+  .btn-add:hover:not(:disabled){opacity:0.88;}
+  .file-msg{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    margin-top:12px;
+    color:#5fa389;
+  }
+  .file-msg.err{color:var(--rust);}
+
+  /* ---------- Run button ---------- */
+  .run-zone{
+    text-align:center;
+    padding:8px 0 4px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:14px;
+  }
+  .run-btn{
+    font-family:'Fraunces',serif;
+    font-size:19px;
+    font-weight:600;
+    background:var(--amber);
+    color:var(--ink);
+    border:none;
+    border-radius:999px;
+    padding:18px 46px;
+    cursor:pointer;
+    letter-spacing:0.01em;
+    box-shadow:0 0 0 1px rgba(255,255,255,0.08), 0 12px 30px -10px rgba(193,115,46,0.55);
+    transition:transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .run-btn:hover:not(:disabled){transform:translateY(-2px);}
+  .run-btn:disabled{opacity:0.6; cursor:not-allowed;}
+  .run-sub{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11.5px;
+    color:var(--ink-faint);
+  }
+  .run-sub .mode{color:var(--paper-dim); text-transform:uppercase; letter-spacing:0.08em;}
+
+  /* ---------- Result cards ---------- */
+  .results-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(310px,1fr));
+    gap:18px;
+  }
+  .rcard{
+    position:relative;
+    background:var(--paper);
+    color:var(--ink);
+    border-radius:8px;
+    padding:18px 18px 20px;
+    overflow:hidden;
+  }
+  .rcard .top-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    margin-bottom:12px;
+  }
+  .rcard .txn-id{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+    font-weight:600;
+  }
+  .rcard .method-tag{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:9.5px;
+    letter-spacing:0.09em;
+    text-transform:uppercase;
+    padding:3px 7px;
+    border-radius:3px;
+    font-weight:600;
+  }
+  .method-tag.DETERMINISTIC{background:var(--rule); color:#e9f4ef;}
+  .method-tag.AI{background:var(--ai); color:#e9e8f7;}
+
+  .rcard .arrow-line{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+    margin-bottom:6px;
+    color:#4a4436;
+  }
+  .rcard .arrow-line .lease{font-weight:600; color:var(--ink);}
+  .rcard .arrow-line .none{font-style:italic; color:#a89e8a;}
+  .rcard .amt-line{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:20px;
+    font-variant-numeric:tabular-nums;
+    margin:8px 0 12px;
+    font-weight:600;
+  }
+  .rcard .reason{
+    font-size:12.5px;
+    line-height:1.5;
+    color:#4a4436;
+    font-style:italic;
+    border-left:2px solid var(--paper-dim);
+    padding-left:10px;
+  }
+
+  /* rubber stamp */
+  .stamp{
+    position:absolute;
+    top:14px;
+    right:14px;
+    font-family:'IBM Plex Mono',monospace;
+    font-weight:700;
+    font-size:10.5px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    padding:6px 10px 5px;
+    border:2px solid currentColor;
+    border-radius:4px;
+    transform:rotate(6deg);
+    opacity:0.9;
+    mix-blend-mode:multiply;
+    text-align:center;
+    line-height:1.3;
+  }
+  .stamp .conf{
+    display:block;
+    font-size:9px;
+    font-weight:500;
+    opacity:0.85;
+  }
+  .stamp.MATCHED_EXACT{color:var(--rule-dim);}
+  .stamp.MATCHED_AI{color:var(--ai);}
+  .stamp.FLAGGED{color:var(--amber); transform:rotate(-5deg);}
+  .stamp.UNMATCHED{color:var(--rust); transform:rotate(-8deg);}
+
+  .empty-state{
+    text-align:center;
+    padding:60px 20px;
+    color:var(--ink-faint);
+    font-size:14px;
+    border:1px dashed var(--line);
+    border-radius:8px;
+  }
+  .empty-state .big{
+    font-family:'Fraunces',serif;
+    font-size:22px;
+    color:var(--paper-dim);
+    margin-bottom:8px;
+    font-style:italic;
+  }
+
+  footer{
+    text-align:center;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    color:var(--ink-faint);
+    padding-top:24px;
+    border-top:1px solid var(--line);
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none !important;}
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div>
+      <div class="case-id">Case file · reconciliation ledger · De Lage Landen</div>
+      <h1>Lease payments,<br><em>reconciled &amp; explained.</em></h1>
+      <div class="subline">Every incoming payment is checked against the lease schedule. Clean matches clear on rules alone — the rest get a plain-language ruling from the AI, kept for the audit trail.</div>
+    </div>
+    <div class="conn-box">
+      <div class="conn-row">
+        <span class="conn-label">API</span>
+        <input id="apiBase" value="http://localhost:8080" spellcheck="false" />
+      </div>
+      <div class="conn-row" style="justify-content:flex-end;">
+        <span class="dot wait" id="connDot"></span>
+        <span class="conn-label" id="connLabel">not connected</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="tally" id="tally">
+    <div class="cell"><span class="num" id="tTotal">–</span><span class="lbl">Transactions</span></div>
+    <div class="cell rule"><span class="num" id="tRule">–</span><span class="lbl">Matched · Rules</span></div>
+    <div class="cell ai"><span class="num" id="tAi">–</span><span class="lbl">Matched · AI</span></div>
+    <div class="cell flag"><span class="num" id="tFlag">–</span><span class="lbl">Flagged</span></div>
+    <div class="cell unm"><span class="num" id="tUnm">–</span><span class="lbl">Unmatched</span></div>
+  </div>
+
+  <section>
+    <div class="ledgers">
+      <div class="ledger-card">
+        <div class="lc-head">
+          <h3>Lease schedule</h3>
+          <span class="count" id="leaseCount">— rows</span>
+        </div>
+        <table>
+          <thead><tr><th>Lease ID</th><th>Client</th><th class="amt-h">Expected</th><th>Due</th></tr></thead>
+          <tbody id="leaseBody"><tr class="empty-row"><td colspan="4">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="ledger-card">
+        <div class="lc-head">
+          <h3>Incoming payments</h3>
+          <span class="count" id="txnCount">— rows</span>
+        </div>
+        <table>
+          <thead><tr><th>Txn ID</th><th class="amt-h">Amount</th><th>Date</th><th>Reference</th></tr></thead>
+          <tbody id="txnBody"><tr class="empty-row"><td colspan="4">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="file-entry">
+      <div class="toggle-row" id="entryToggle">
+        <h2>File a new transaction</h2>
+        <span class="chev" id="entryChev">▾</span>
+      </div>
+      <div class="entry-body" id="entryBody">
+        <div class="field"><label>Txn ID</label><input id="fTxnId" placeholder="TXN-1007" /></div>
+        <div class="field"><label>Amount</label><input id="fAmount" placeholder="1200.00" /></div>
+        <div class="field"><label>Date</label><input id="fDate" placeholder="2026-01-30" /></div>
+        <div class="field full"><label>Reference</label><input id="fRef" placeholder="jan lease dll 4471 thanks!" /></div>
+        <button class="btn btn-add" id="addBtn">Add entry</button>
+      </div>
+      <div id="fileMsg"></div>
+    </div>
+  </section>
+
+  <section class="run-zone">
+    <button class="run-btn" id="runBtn">Run reconciliation</button>
+    <div class="run-sub">AI mode: <span class="mode" id="aiMode">unknown</span></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Ruling <span class="idx" id="resultCount"></span></h2>
+      <span class="hint">Deterministic rule → matched instantly. AI → judgment call, always with a reason.</span>
+    </div>
+    <div id="resultsZone">
+      <div class="empty-state">
+        <div class="big">No ruling yet</div>
+        Run the reconciliation above to see how each payment was resolved.
+      </div>
+    </div>
+  </section>
+
+  <footer>Lease Payment Reconciliation — hybrid rules + AI demo interface</footer>
+</div>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  const apiBaseInput = $('apiBase');
+  const connDot = $('connDot');
+  const connLabel = $('connLabel');
+
+  function base(){
+    return apiBaseInput.value.trim().replace(/\/+$/,'');
+  }
+
+  function fmtMoney(v){
+    const n = Number(v);
+    return n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+
+  async function api(path, opts){
+    const res = await fetch(base() + path, Object.assign({
+      headers:{'Content-Type':'application/json'}
+    }, opts||{}));
+    if(!res.ok) throw new Error('Request failed: ' + res.status);
+    return res.json();
+  }
+
+  function setConn(state){
+    connDot.className = 'dot ' + state;
+    connLabel.textContent = state === 'ok' ? 'connected' : state === 'bad' ? 'unreachable' : 'checking…';
+  }
+
+  function renderLeases(leases){
+    $('leaseCount').textContent = leases.length + ' row' + (leases.length===1?'':'s');
+    if(!leases.length){
+      $('leaseBody').innerHTML = '<tr class="empty-row"><td colspan="4">No leases seeded yet.</td></tr>';
+      return;
+    }
+    $('leaseBody').innerHTML = leases.map(l => `
+      <tr>
+        <td class="mono">${esc(l.leaseId)}</td>
+        <td>${esc(l.clientName)}</td>
+        <td class="amt">${fmtMoney(l.expectedAmount)}</td>
+        <td class="mono">${esc(l.dueDate)}</td>
+      </tr>
+    `).join('');
+  }
+
+  function renderTxns(txns){
+    $('txnCount').textContent = txns.length + ' row' + (txns.length===1?'':'s');
+    if(!txns.length){
+      $('txnBody').innerHTML = '<tr class="empty-row"><td colspan="4">No transactions seeded yet.</td></tr>';
+      return;
+    }
+    $('txnBody').innerHTML = txns.map(t => `
+      <tr>
+        <td class="mono">${esc(t.txnId)}</td>
+        <td class="amt">${fmtMoney(t.amount)}</td>
+        <td class="mono">${esc(t.date)}</td>
+        <td class="ref-cell">${esc(t.reference || '')}</td>
+      </tr>
+    `).join('');
+  }
+
+  function statusLabel(s){
+    return {
+      MATCHED_EXACT:'Matched',
+      MATCHED_AI:'Matched',
+      FLAGGED:'Flagged',
+      UNMATCHED:'Unmatched'
+    }[s] || s;
+  }
+
+  function renderResults(resp){
+    $('tTotal').textContent = resp.totalTransactions;
+    $('tRule').textContent = resp.matchedByRules;
+    $('tAi').textContent = resp.matchedByAi;
+    $('tFlag').textContent = resp.flagged;
+    $('tUnm').textContent = resp.unmatched;
+    $('aiMode').textContent = resp.aiMode || 'unknown';
+
+    const results = resp.results || [];
+    $('resultCount').textContent = '· ' + results.length + ' resolved';
+
+    if(!results.length){
+      $('resultsZone').innerHTML = '<div class="empty-state"><div class="big">Nothing to rule on</div>No transactions were found to reconcile.</div>';
+      return;
+    }
+
+    $('resultsZone').innerHTML = `<div class="results-grid">${results.map(r => `
+      <div class="rcard">
+        <div class="stamp ${esc(r.status)}">${statusLabel(r.status)}<span class="conf">${Math.round(r.confidence*100)}% conf.</span></div>
+        <div class="top-row">
+          <span class="txn-id">${esc(r.txnId)}</span>
+          <span class="method-tag ${esc(r.method)}">${esc(r.method)}</span>
+        </div>
+        <div class="arrow-line">
+          ${r.matchedLeaseId ? `→ <span class="lease">${esc(r.matchedLeaseId)}</span>` : `→ <span class="none">no lease identified</span>`}
+        </div>
+        <div class="amt-line">${fmtMoney(r.amount)}</div>
+        <div class="reason">${esc(r.reason)}</div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  function esc(str){
+    if(str===null || str===undefined) return '';
+    return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  async function loadLedgers(){
+    setConn('wait');
+    try{
+      const [leases, txns] = await Promise.all([api('/api/leases'), api('/api/transactions')]);
+      renderLeases(leases);
+      renderTxns(txns);
+      setConn('ok');
+    }catch(e){
+      setConn('bad');
+      $('leaseBody').innerHTML = '<tr class="empty-row"><td colspan="4">Could not reach the API.</td></tr>';
+      $('txnBody').innerHTML = '<tr class="empty-row"><td colspan="4">Could not reach the API.</td></tr>';
+    }
+  }
+
+  $('runBtn').addEventListener('click', async () => {
+    const btn = $('runBtn');
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Reconciling…';
+    try{
+      const resp = await api('/api/reconcile', {method:'POST'});
+      renderResults(resp);
+      setConn('ok');
+    }catch(e){
+      setConn('bad');
+      $('resultsZone').innerHTML = '<div class="empty-state"><div class="big">Could not run reconciliation</div>Check the API address above and that the backend is running.</div>';
+    }finally{
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
+
+  const entryToggle = $('entryToggle');
+  const entryBody = $('entryBody');
+  const entryChev = $('entryChev');
+  entryToggle.addEventListener('click', () => {
+    entryBody.classList.toggle('open');
+    entryChev.classList.toggle('open');
+  });
+
+  $('addBtn').addEventListener('click', async () => {
+    const txnId = $('fTxnId').value.trim();
+    const amount = $('fAmount').value.trim();
+    const date = $('fDate').value.trim();
+    const reference = $('fRef').value.trim();
+    const msg = $('fileMsg');
+    if(!txnId || !amount || !date){
+      msg.className = 'file-msg err';
+      msg.textContent = 'Txn ID, amount, and date are required.';
+      return;
+    }
+    try{
+      await api('/api/transactions', {method:'POST', body: JSON.stringify({txnId, amount: Number(amount), date, reference})});
+      msg.className = 'file-msg';
+      msg.textContent = `${txnId} added. Re-run reconciliation to see how it resolves.`;
+      ['fTxnId','fAmount','fDate','fRef'].forEach(id => $(id).value = '');
+      loadLedgers();
+    }catch(e){
+      msg.className = 'file-msg err';
+      msg.textContent = 'Could not add that transaction. Check the API address above.';
+    }
+  });
+
+  apiBaseInput.addEventListener('change', loadLedgers);
+
+  loadLedgers();
+})();
+</script>
+
+</body>
+</html>
