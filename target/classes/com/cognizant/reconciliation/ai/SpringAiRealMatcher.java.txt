@@ -14,6 +14,25 @@
  *
  * Nothing else in the codebase changes - it implements the same AiMatcher
  * interface the rest of the app already depends on.
+ *
+ * -----------------------------------------------------------------------
+ * HARDENING ADDED ON TOP OF THE BASELINE TEMPLATE
+ * -----------------------------------------------------------------------
+ *   1. Prompt now contains an EXPLICIT disambiguation rule: if the
+ *      reference's digits could plausibly point at more than one lease,
+ *      the model is told to let the amount break the tie.
+ *   2. Every matchedLeaseId returned by the model is validated against
+ *      the actual candidate list. A hallucinated / garbled id is never
+ *      trusted - it's demoted to UNMATCHED for manual review instead.
+ *   3. The model's self-reported status (MATCHED_AI / FLAGGED / UNMATCHED)
+ *      is NOT trusted blindly. We already know the real amount and the
+ *      real expected amount once a lease id is confirmed valid, so we
+ *      recompute the correct status/reason in code and override the
+ *      model's arithmetic if it disagrees.
+ *   4. The raw, unparsed model response is logged for every batch call,
+ *      so if the model reasons well but the parse/validation layer
+ *      overrides something, there's a paper trail showing exactly what
+ *      the model actually said.
  * =====================================================================
  */
 package com.cognizant.reconciliation.ai;
@@ -22,16 +41,23 @@ import com.cognizant.reconciliation.dto.MatchResult;
 import com.cognizant.reconciliation.model.BankTransaction;
 import com.cognizant.reconciliation.model.LeaseSchedule;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Component
 @ConditionalOnProperty(name = "recon.ai.mode", havingValue = "real")
 public class SpringAiRealMatcher implements AiMatcher {
+
+    private static final Logger log = LoggerFactory.getLogger(SpringAiRealMatcher.class);
 
     private final ChatClient chatClient;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -53,6 +79,13 @@ public class SpringAiRealMatcher implements AiMatcher {
             return out;
         }
 
+        // Quick lookup of valid leases by id, used later to validate whatever
+        // the model returns. Never trust an id we can't find in here.
+        Map<String, LeaseSchedule> leaseById = new HashMap<>();
+        for (LeaseSchedule l : candidates) {
+            leaseById.put(l.getLeaseId(), l);
+        }
+
         String prompt = buildPrompt(unresolved, candidates);
 
         // One clean call. We ask the model to return strict JSON so we can parse it.
@@ -61,25 +94,36 @@ public class SpringAiRealMatcher implements AiMatcher {
                 .call()
                 .content();
 
+        // (4) AUDIT TRAIL: always log the raw model response, before any
+        // parsing or validation touches it. This is what lets you tell the
+        // difference later between "the model reasoned badly" and "the
+        // parsing/validation layer overrode a correct answer".
+        log.info("[AiMatcher.real] raw model response for {} unresolved txn(s):\n{}",
+                unresolved.size(), json);
+
         try {
-            // Expecting: [ { "txnId": "...", "matchedLeaseId": "..." | null,
-            //                "status": "MATCHED_AI|FLAGGED|UNMATCHED",
-            //                "confidence": 0.0-1.0, "reason": "..." }, ... ]
             AiLine[] lines = mapper.readValue(stripFences(json), AiLine[].class);
+
             for (AiLine line : lines) {
-                BigDecimalHolder amount = findAmount(unresolved, line.txnId);
-                out.add(new MatchResult(
-                        line.txnId,
-                        line.matchedLeaseId,
-                        amount == null ? null : amount.value,
-                        line.status,
-                        "AI",
-                        line.confidence,
-                        line.reason
-                ));
+                BigDecimal amount = findAmount(unresolved, line.txnId);
+                if (amount == null) {
+                    // Model referenced a txnId we didn't even send it. Skip rather
+                    // than fabricate a result for a transaction we can't tie back.
+                    log.warn("[AiMatcher.real] model returned unknown txnId '{}', ignoring line", line.txnId);
+                    continue;
+                }
+
+                out.add(resolveLine(line, amount, leaseById));
             }
+
+            // Safety net: if the model dropped a transaction entirely (returned
+            // fewer lines than we sent), make sure every unresolved txn still
+            // gets a result instead of silently vanishing from the report.
+            addMissingAsUnmatched(unresolved, out);
+
         } catch (Exception e) {
             // If the model returns something unparseable, fail safe: mark all for review.
+            log.error("[AiMatcher.real] failed to parse model response, routing all to manual review", e);
             for (BankTransaction txn : unresolved) {
                 out.add(new MatchResult(
                         txn.getTxnId(), null, txn.getAmount(),
@@ -89,6 +133,80 @@ public class SpringAiRealMatcher implements AiMatcher {
             }
         }
         return out;
+    }
+
+    /**
+     * Turns one model-proposed line into a trustworthy MatchResult.
+     *
+     * (2) VALIDATION: matchedLeaseId must exist in the real candidate list.
+     * (3) CROSS-CHECK: once we know it's a real lease, we recompute
+     *     status/reason from the actual numbers rather than trusting the
+     *     model's own MATCHED_AI/FLAGGED/UNMATCHED label and arithmetic.
+     */
+    private MatchResult resolveLine(AiLine line, BigDecimal amount, Map<String, LeaseSchedule> leaseById) {
+        String proposedId = line.matchedLeaseId;
+        LeaseSchedule lease = (proposedId == null) ? null : leaseById.get(proposedId);
+
+        boolean modelProposedIdButItWasInvalid = proposedId != null && lease == null;
+        if (modelProposedIdButItWasInvalid) {
+            log.warn("[AiMatcher.real] model proposed matchedLeaseId '{}' for txn {} but it is not a real lease - "
+                    + "demoting to UNMATCHED", proposedId, line.txnId);
+        }
+
+        if (lease == null) {
+            // Either the model said "no match" (proposedId == null) or it
+            // hallucinated an id we can't verify. Either way: no confirmed
+            // lease, so this goes to manual review. We keep the model's
+            // reason text (it's still useful context for a human) but we
+            // control the status/confidence ourselves.
+            String reason = modelProposedIdButItWasInvalid
+                    ? "AI proposed lease '" + proposedId + "' which does not exist in the schedule; "
+                      + "routed to manual review. Original AI reasoning: " + safe(line.reason)
+                    : safe(line.reason, "AI could not identify a matching lease; routed to manual review.");
+            return new MatchResult(line.txnId, null, amount, "UNMATCHED", "AI", 0.0, reason);
+        }
+
+        // We have a real, verified lease. Now decide EXACT / PARTIAL / OVERPAYMENT
+        // ourselves from the actual numbers, instead of trusting the model's
+        // self-reported status and confidence.
+        int cmp = amount.compareTo(lease.getExpectedAmount());
+        double confidence = clamp(line.confidence);
+        String modelReason = safe(line.reason, "No reasoning provided by AI.");
+
+        if (cmp == 0) {
+            return new MatchResult(line.txnId, lease.getLeaseId(), amount,
+                    "MATCHED_AI", "AI", Math.max(confidence, 0.6),
+                    modelReason + " (verified: amount matches " + lease.getLeaseId() + " exactly.)");
+        } else if (cmp < 0) {
+            BigDecimal shortfall = lease.getExpectedAmount().subtract(amount);
+            return new MatchResult(line.txnId, lease.getLeaseId(), amount,
+                    "FLAGGED", "AI", Math.min(confidence, 0.85),
+                    modelReason + " (verified: PARTIAL payment for " + lease.getLeaseId()
+                            + " - received " + amount + " vs expected " + lease.getExpectedAmount()
+                            + ", short by " + shortfall + ".)");
+        } else {
+            BigDecimal excess = amount.subtract(lease.getExpectedAmount());
+            return new MatchResult(line.txnId, lease.getLeaseId(), amount,
+                    "FLAGGED", "AI", Math.min(confidence, 0.85),
+                    modelReason + " (verified: OVERPAYMENT for " + lease.getLeaseId()
+                            + " - received " + amount + " vs expected " + lease.getExpectedAmount()
+                            + ", over by " + excess + ".)");
+        }
+    }
+
+    /** Ensures no unresolved transaction is ever silently dropped from the report. */
+    private void addMissingAsUnmatched(List<BankTransaction> unresolved, List<MatchResult> out) {
+        for (BankTransaction txn : unresolved) {
+            boolean covered = out.stream().anyMatch(r -> r.getTxnId().equals(txn.getTxnId()));
+            if (!covered) {
+                log.warn("[AiMatcher.real] model omitted txn {} entirely - routing to manual review", txn.getTxnId());
+                out.add(new MatchResult(
+                        txn.getTxnId(), null, txn.getAmount(),
+                        "UNMATCHED", "AI", 0.0,
+                        "AI did not return a result for this transaction; routed to manual review."
+                ));
+            }
+        }
     }
 
     private String buildPrompt(List<BankTransaction> txns, List<LeaseSchedule> leases) {
@@ -111,7 +229,18 @@ public class SpringAiRealMatcher implements AiMatcher {
 
         sb.append("\nFor each transaction decide: matchedLeaseId (or null if none), ")
           .append("status (MATCHED_AI if amount equals expected, FLAGGED if partial/overpayment, ")
-          .append("UNMATCHED if no lease can be identified), a confidence 0.0-1.0, and a one-line reason.\n")
+          .append("UNMATCHED if no lease can be identified), a confidence 0.0-1.0, and a one-line reason.\n\n")
+          // (1) EXPLICIT DISAMBIGUATION RULE
+          .append("DISAMBIGUATION RULE: Lease ids in this schedule can share overlapping digits or ")
+          .append("prefixes (e.g. a reference containing \"447\" could plausibly refer to several leases ")
+          .append("ending in 447x). Never pick a lease based on digits alone. When the reference text is ")
+          .append("ambiguous or only partially identifies a lease, use the transaction amount to break the ")
+          .append("tie - prefer the lease whose expected amount matches the transaction amount exactly. ")
+          .append("If, after considering both the reference text and the amount, more than one lease is ")
+          .append("still equally plausible, or none fit well, return matchedLeaseId=null and status=UNMATCHED ")
+          .append("rather than guessing.\n\n")
+          .append("Only ever set matchedLeaseId to one of the exact lease ids listed above, or null. ")
+          .append("Never invent or abbreviate a lease id.\n")
           .append("Respond with ONLY a JSON array, no markdown, no commentary.");
         return sb.toString();
     }
@@ -120,24 +249,32 @@ public class SpringAiRealMatcher implements AiMatcher {
         return s == null ? "[]" : s.replace("```json", "").replace("```", "").trim();
     }
 
+    private double clamp(double v) {
+        if (Double.isNaN(v)) return 0.0;
+        return Math.max(0.0, Math.min(1.0, v));
+    }
+
+    private String safe(String reason) {
+        return safe(reason, "");
+    }
+
+    private String safe(String reason, String fallback) {
+        return (reason == null || reason.isBlank()) ? fallback : reason;
+    }
+
     // --- small helpers ---
     private static class AiLine {
         public String txnId;
         public String matchedLeaseId;
-        public String status;
+        public String status;      // kept for logging/reference only - not trusted, see resolveLine()
         public double confidence;
         public String reason;
     }
 
-    private static class BigDecimalHolder {
-        java.math.BigDecimal value;
-        BigDecimalHolder(java.math.BigDecimal v) { this.value = v; }
-    }
-
-    private BigDecimalHolder findAmount(List<BankTransaction> txns, String txnId) {
+    private BigDecimal findAmount(List<BankTransaction> txns, String txnId) {
         for (BankTransaction t : txns) {
             if (t.getTxnId().equals(txnId)) {
-                return new BigDecimalHolder(t.getAmount());
+                return t.getAmount();
             }
         }
         return null;
