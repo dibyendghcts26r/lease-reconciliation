@@ -2,6 +2,10 @@ package com.cognizant.reconciliation.model;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
@@ -16,10 +20,14 @@ import java.time.LocalDate;
 public class BankTransaction {
 
     @Id
+    @NotBlank(message = "txnId is required")
     private String txnId;            // e.g. "TXN-1001"
 
+    @NotNull(message = "amount is required")
+    @Positive(message = "amount must be greater than zero")
     private BigDecimal amount;
 
+    @NotNull(message = "date is required")
     private LocalDate date;
 
     private String reference;        // messy free text, e.g. "lease pmt jan dll4471"
