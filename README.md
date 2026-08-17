@@ -123,12 +123,28 @@ Then re-run `POST /api/reconcile` and show the AI resolving your new messy refer
 The base project ships with a **mock** AI (pure Java heuristics) so it runs with no key. To use a real LLM:
 
 1. In `pom.xml`, uncomment the Spring AI starter dependency.
-   Get the exact artifact + version from https://start.spring.io (search "OpenAI" or "Anthropic") — the Spring AI artifact names changed around the 1.0 release, so generating it there guarantees the correct, version-matched string. Use whatever provider the hackathon gives you access to (e.g. Azure OpenAI).
+  Get the exact artifact + version from https://start.spring.io (search "Azure OpenAI") — the Spring AI artifact names changed around the 1.0 release, so generating it there guarantees the correct, version-matched string.
 2. Rename `src/main/java/com/cognizant/reconciliation/ai/SpringAiRealMatcher.java.txt`
    to `SpringAiRealMatcher.java`.
-3. In `application.properties`, set `recon.ai.mode=real` and fill in the provider key/model
-   properties (examples are in the file, commented out).
-4. Run again. Everything else is unchanged — both matchers implement the same `AiMatcher`
+3. Set Azure environment variables (PowerShell):
+
+```powershell
+setx AZURE_OPENAI_API_KEY "<your-azure-openai-api-key>"
+setx AZURE_OPENAI_ENDPOINT "https://<your-resource-name>.openai.azure.com"
+setx AZURE_OPENAI_DEPLOYMENT "<your-chat-deployment-name>"
+```
+
+4. In `application.properties`, set `recon.ai.mode=real` and enable the Azure properties:
+
+```properties
+spring.ai.azure.openai.api-key=${AZURE_OPENAI_API_KEY}
+spring.ai.azure.openai.endpoint=${AZURE_OPENAI_ENDPOINT}
+spring.ai.azure.openai.chat.options.deployment-name=${AZURE_OPENAI_DEPLOYMENT}
+spring.ai.azure.openai.chat.options.temperature=0.0
+```
+
+5. Restart the app so the new environment variables are picked up.
+6. Run again. Everything else is unchanged — both matchers implement the same `AiMatcher`
    interface, so nothing else in the code needs to change.
 
 ---
