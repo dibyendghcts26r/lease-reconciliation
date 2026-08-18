@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
 
 import java.util.List;
 
@@ -50,7 +51,7 @@ public class ReconciliationController {
     }
 
     @PostMapping("/transactions")
-    public BankTransaction addTransaction(@RequestBody BankTransaction txn) {
+    public BankTransaction addTransaction(@Valid @RequestBody BankTransaction txn) {
         return txnRepo.save(txn);
     }
 
