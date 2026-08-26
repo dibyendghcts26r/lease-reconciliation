@@ -6,11 +6,16 @@ import com.cognizant.reconciliation.model.LeaseSchedule;
 import com.cognizant.reconciliation.repository.BankTransactionRepository;
 import com.cognizant.reconciliation.repository.LeaseScheduleRepository;
 import com.cognizant.reconciliation.service.ReconciliationService;
+
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.dao.DataIntegrityViolationException;
+
 import jakarta.validation.Valid;
 
 import java.util.List;
@@ -52,7 +57,15 @@ public class ReconciliationController {
 
     @PostMapping("/transactions")
     public BankTransaction addTransaction(@Valid @RequestBody BankTransaction txn) {
-        return txnRepo.save(txn);
+        if(txnRepo.existsById(txn.getTxnId())){
+            throw new ResponseStatusException(HttpStatus.CONFLICT,"Duplicate txnid: " + txn.getTxnId());
+        }
+        try{
+            return txnRepo.save(txn);
+        } catch (DataIntegrityViolationException ex){
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT, " Duplicate txnid: " + txn.getTxnId() , ex);
+        }
     }
 
     @PostMapping("/reconcile")

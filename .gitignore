@@ -1,0 +1,13 @@
+target/
+bin/target/
+
+# Eclipse project files
+.classpath
+.project
+.settings/
+
+# VS Code workspace settings
+.vscode/
+
+# Java build output
+*.class
