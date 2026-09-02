@@ -1,5 +1,6 @@
 target/
 bin/target/
+\bin
 
 # Eclipse project files
 .classpath
